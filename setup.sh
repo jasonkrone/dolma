@@ -11,9 +11,9 @@ if [[ $UNAME == "Darwin" ]]; then
   which openssl || brew install openssl
 elif [[ $UNAME == "Linux" ]]; then
   echo "Linux detected..."
-  which cmake || sudo apt-get install --yes build-essential cmake
-  which protoc || sudo apt-get install --yes protobuf-compiler
-  which openssl || sudo apt-get install --yes libssl-dev
+  which cmake || apt-get install --yes build-essential cmake
+  which protoc || apt-get install --yes protobuf-compiler
+  which openssl || apt-get install --yes libssl-dev
 else
   echo "Unsupported OS; please install rust, cmake, protobuf, maturin and openssl manually!"
   exit 1

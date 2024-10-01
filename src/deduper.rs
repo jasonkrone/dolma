@@ -295,12 +295,11 @@ fn write_attributes(
                         // TODO: we need to get the documents and tokenize them
                         let text = data["text"].as_str().unwrap();
                         let text_length = text.len();
+                        let mut duplicate_paragraph_spans = Vec::new();
 
                         if text_length > 0 {
                             // TODO: this is really duplicate text spans
                             // basically i want this to contain the spans of all n-grams in the doc where we got a match
-                            let mut duplicate_paragraph_spans = Vec::new();
-
                             for token in tokenize(text) {
                                 ngram.push_back(token);
                                 if ngram.len() == ngram_length {
@@ -380,9 +379,9 @@ fn write_attributes(
                                     duplicate_paragraph_spans.push(Value::Array(span));
                                 }
                             }
+                            // TODO: think we should just put the fraction of overlaps here
+                            attributes[attr_name] = Value::Array(duplicate_paragraph_spans);
                         }
-                        // TODO: think we should just put the fraction of overlaps here
-                        attributes[attr_name] = Value::Array(duplicate_paragraph_spans);
                     }
                 }
             }
