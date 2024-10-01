@@ -247,37 +247,142 @@ fn write_attributes(
                     // and the document key is empty after trimming (i.e., removing whitespace)
                     attributes[attr_name] = Value::Array(Vec::new());
                 } else {
-                    let dedupe_key = VecDeque::from([document_key.as_str()]);
+                    // TODO: this is where JPK started modifying
+                    // deduplicated on the document level
+                    if cfg.by_ngram.is_none() {
+                        let dedupe_key = VecDeque::from([document_key.as_str()]);
 
-                    //Just compute the first hash to see if it matches the partition
-                    num_observed += 1;
-                    let hashes = build_hashes(
-                        &bloom_filter,
-                        &dedupe_key,
-                        dedupe_config.num_partitions.unwrap_or(1),
-                        dedupe_config.partition_index.unwrap_or(0),
-                    );
+                        //Just compute the first hash to see if it matches the partition
+                        num_observed += 1;
+                        let hashes = build_hashes(
+                            &bloom_filter,
+                            &dedupe_key,
+                            dedupe_config.num_partitions.unwrap_or(1),
+                            dedupe_config.partition_index.unwrap_or(0),
+                        );
 
-                    if !hashes.is_empty() {
-                        num_processed += 1;
-                        //Compute the remaining hashes
-                        if bloom_filter.contains(&hashes) {
-                            // attributes[&cfg.attribute_name] = Value::Bool(true);
-
-                            let mut duplicate_docs_array = Vec::new();
-                            let attr = vec![
-                                Value::from(0),
-                                Value::Number(document_key.len().into()),
-                                Value::from(1),
-                            ];
-                            duplicate_docs_array.push(Value::Array(attr));
-                            attributes[attr_name] = Value::Array(duplicate_docs_array);
-                        } else if !bloom_filter.read_only {
-                            bloom_filter.insert(&hashes);
+                        if !hashes.is_empty() {
+                            num_processed += 1;
+                            //Compute the remaining hashes
+                            if bloom_filter.contains(&hashes) {
+                                let mut duplicate_docs_array = Vec::new();
+                                let attr = vec![
+                                    Value::from(0),
+                                    Value::Number(document_key.len().into()),
+                                    Value::from(1),
+                                ];
+                                duplicate_docs_array.push(Value::Array(attr));
+                                attributes[attr_name] = Value::Array(duplicate_docs_array);
+                            } else if !bloom_filter.read_only {
+                                bloom_filter.insert(&hashes);
+                            }
+                        } else {
+                            //The dedupe key doesn't belong to this partition
+                            attributes[attr_name] = Value::Array(Vec::new());
                         }
                     } else {
-                        //The dedupe key doesn't belong to this partition
-                        attributes[attr_name] = Value::Array(Vec::new());
+                        // TODO: just need to check if there's other stuff here to do 
+                        // dedupe by ngram overlap
+                        let by_ngram = cfg.clone().by_ngram.unwrap();
+                        let ngram_length = by_ngram.ngram_length;
+                        let stride = by_ngram.stride;
+                        let mut ngram: VecDeque<&str> =
+                            VecDeque::with_capacity(ngram_length);
+                        let mut word_index = 0;
+                        let mut last_ngram_start = 0;
+                        let mut ngram_count = 0;
+                        let mut duplicate_ngram_count = 0;
+                        // TODO: we need to get the documents and tokenize them
+                        let text = data["text"].as_str().unwrap();
+                        let text_length = text.len();
+
+                        if text_length > 0 {
+                            // TODO: this is really duplicate text spans
+                            // basically i want this to contain the spans of all n-grams in the doc where we got a match
+                            let mut duplicate_paragraph_spans = Vec::new();
+
+                            for token in tokenize(text) {
+                                ngram.push_back(token);
+                                if ngram.len() == ngram_length {
+                                    let ngram_start = word_index - (ngram_length - 1);
+                                    if last_ngram_start == 0
+                                        || ngram_start - last_ngram_start >= stride
+                                    {
+                                        last_ngram_start = ngram_start;
+                                        ngram_count += 1;
+                                        let dedupe_key = VecDeque::from(ngram.clone());
+                                        let hashes = build_hashes(
+                                            &bloom_filter,
+                                            &dedupe_key,
+                                            dedupe_config.num_partitions.unwrap_or(1),
+                                            dedupe_config.partition_index.unwrap_or(0),
+                                        );
+                                        num_observed += 1;
+                                        if !hashes.is_empty() {
+                                            num_processed += 1;
+                                            if bloom_filter.contains(&hashes) {
+                                                duplicate_ngram_count += 1;
+                                            } else if !bloom_filter.read_only {
+                                                bloom_filter.insert(&hashes);
+                                            }
+                                        }
+                                    }
+                                    ngram.pop_front();
+                                }
+                                word_index += 1;
+                            }
+                            if ngram_count < 2
+                                && !by_ngram.skip_short_paragraphs.unwrap_or(false)
+                            {
+                                // Too few ngrams to dedupe by overlap. Just compare the whole thing
+                                let dedupe_key = VecDeque::from([text]);
+                                let hashes = bloom_filter.hashes(&dedupe_key);
+
+                                let span_score = match bloom_filter.contains(&hashes) {
+                                    // we found a match! score is 1.0
+                                    true => 1.0,
+                                    false => {
+                                        // this is a new paragraph, push to bloom filter
+                                        if !bloom_filter.read_only {
+                                            bloom_filter.insert(&hashes);
+                                        }
+                                        // score is 0.0 because it's not a duplicate
+                                        0.0
+                                    }
+                                };
+
+                                // TODO: need to figure out what par_start and par_end are here! 
+                                // TODO: also need to figure out what these spans are ! 
+
+                                // we check if the score is above the threshold; note that
+                                // users can set the threshold to 0.0 to always include the span,
+                                // or 1.0 to only include spans that are exact duplicates.
+                                if span_score >= by_ngram.overlap_threshold {
+                                    let span = vec![
+                                        Value::from(0),
+                                        Value::from(-1),
+                                        Value::from(span_score),
+                                    ];
+                                    // add span to duplicate_paragraph_spans
+                                    duplicate_paragraph_spans.push(Value::Array(span));
+                                }
+                            } else {
+                                let overlap_fraction =
+                                    duplicate_ngram_count as f32 / ngram_count as f32;
+
+                                if overlap_fraction >= by_ngram.overlap_threshold {
+                                    let span = vec![
+                                        Value::from(0),
+                                        Value::from(-1),
+                                        Value::from(overlap_fraction),
+                                    ];
+                                    // add span to duplicate_paragraph_spans
+                                    duplicate_paragraph_spans.push(Value::Array(span));
+                                }
+                            }
+                        }
+                        // TODO: think we should just put the fraction of overlaps here
+                        attributes[attr_name] = Value::Array(duplicate_paragraph_spans);
                     }
                 }
             }
@@ -511,6 +616,7 @@ pub mod deduper_config {
     pub struct DocumentDedupeConfig {
         pub attribute_name: String,
         pub key: String,
+        pub by_ngram: Option<NgramDedupeConfig>,
     }
 
     #[derive(Serialize, Deserialize, Clone)]

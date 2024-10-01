@@ -50,7 +50,9 @@ class ParagraphDedupeConfig:
 class DocumentDedupeConfig:
     attribute_name: Optional[str] = field(help="Name of the output field in the tagger")
     key: str = field(help="Name of the input field to use for deduplication, e.g. `$.metadata.url`")
-
+    by_ngram: Optional[NgramDedupeConfig] = field(
+        default=None, help="Configuration for deduping paragraphs by ngram overlap"
+    )
 
 @dataclass
 class BloomFilterConfig:
