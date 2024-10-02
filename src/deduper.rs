@@ -247,7 +247,6 @@ fn write_attributes(
                     // and the document key is empty after trimming (i.e., removing whitespace)
                     attributes[attr_name] = Value::Array(Vec::new());
                 } else {
-                    // TODO: this is where JPK started modifying
                     // deduplicated on the document level
                     if cfg.by_ngram.is_none() {
                         let dedupe_key = VecDeque::from([document_key.as_str()]);
@@ -281,7 +280,6 @@ fn write_attributes(
                             attributes[attr_name] = Value::Array(Vec::new());
                         }
                     } else {
-                        // TODO: just need to check if there's other stuff here to do 
                         // dedupe by ngram overlap
                         let by_ngram = cfg.clone().by_ngram.unwrap();
                         let ngram_length = by_ngram.ngram_length;
@@ -292,14 +290,13 @@ fn write_attributes(
                         let mut last_ngram_start = 0;
                         let mut ngram_count = 0;
                         let mut duplicate_ngram_count = 0;
-                        // TODO: we need to get the documents and tokenize them
                         let text = data["text"].as_str().unwrap();
                         let text_length = text.len();
                         let mut duplicate_paragraph_spans = Vec::new();
 
                         if text_length > 0 {
-                            // TODO: this is really duplicate text spans
                             // basically i want this to contain the spans of all n-grams in the doc where we got a match
+
                             for token in tokenize(text) {
                                 ngram.push_back(token);
                                 if ngram.len() == ngram_length {
@@ -350,9 +347,6 @@ fn write_attributes(
                                     }
                                 };
 
-                                // TODO: need to figure out what par_start and par_end are here! 
-                                // TODO: also need to figure out what these spans are ! 
-
                                 // we check if the score is above the threshold; note that
                                 // users can set the threshold to 0.0 to always include the span,
                                 // or 1.0 to only include spans that are exact duplicates.
@@ -379,7 +373,6 @@ fn write_attributes(
                                     duplicate_paragraph_spans.push(Value::Array(span));
                                 }
                             }
-                            // TODO: think we should just put the fraction of overlaps here
                             attributes[attr_name] = Value::Array(duplicate_paragraph_spans);
                         }
                     }
